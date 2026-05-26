@@ -4,26 +4,23 @@ import ssl
 import urllib.error
 import urllib.request
 
+from flask import Flask, render_template_string
+
 URL = "https://data.ntpc.gov.tw/api/datasets/781b822e-214a-4b9a-b4db-32c9f4626d98/csv/file"
-PREVIEW_ROWS = 5
-MAX_FIELD_WIDTH = 200
+
+app = Flask(__name__)
 
 
 def download_file(url: str) -> bytes:
-    print(f"Downloading data from: {url}")
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
-            content = response.read()
+            return response.read()
     except urllib.error.URLError:
-        print("下載時遇到 SSL 驗證或連線問題，改為不驗證憑證重試...")
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
         with urllib.request.urlopen(url, context=context, timeout=30) as response:
-            content = response.read()
-
-    print(f"Downloaded {len(content)} bytes.")
-    return content
+            return response.read()
 
 
 def decode_text(content: bytes) -> str:
@@ -40,42 +37,71 @@ def parse_csv(content: bytes) -> list[dict[str, str]]:
     return list(reader)
 
 
-def truncate(s: str, width: int = MAX_FIELD_WIDTH) -> str:
-    s = s.replace("\n", " ").strip()
-    if len(s) <= width:
-        return s
-    return s[:width-3] + "..."
+HTML_TEMPLATE = """
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>新北市政府開放資料</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; color: #212529; }
+    h1, h2 { color: #0d6efd; }
+    .summary { margin-bottom: 16px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 30px; }
+    th, td { border: 1px solid #dee2e6; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #e9ecef; }
+    tr:nth-child(even) { background: #ffffff; }
+    tr:nth-child(odd) { background: #f1f3f5; }
+    .container { max-width: 100%; overflow-x: auto; }
+    .footer { margin-top: 20px; font-size: 0.9rem; color: #495057; }
+  </style>
+</head>
+<body>
+  <h1>新北市政府資料集</h1>
+  <p class="summary">從資料來源下載並解析 CSV，總筆數：{{ total }}。</p>
+  {% if header_fields %}
+  <div class="container">
+    <table>
+      <thead>
+        <tr>
+          {% for field in header_fields %}
+          <th>{{ field }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          {% for field in header_fields %}
+          <td>{{ row[field] }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>找不到任何可用的資料欄位。請確認資料來源是否正確。</p>
+  {% endif %}
+  <div class="footer">資料來源：{{ url }}</div>
+</body>
+</html>
+"""
 
 
-def print_records(records: list[dict[str, str]], max_rows: int = PREVIEW_ROWS) -> None:
-    if not records:
-        print("沒有解析到任何資料。請確認下載內容是否為 CSV 格式。")
-        return
-
-    rows_to_show = min(len(records), max_rows)
-    total = len(records)
-    header_fields = list(records[0].keys())
-
-    print(f"\n===== 解析資料預覽 ({rows_to_show}/{total}) =====\n")
-
-    for idx, record in enumerate(records[:rows_to_show], start=1):
-        print(f"===== 資料 {idx} / {total} =====")
-        print("欄位名稱：對應內容")
-        print("------------------------------")
-        for key in header_fields:
-            value = record.get(key, "")
-            print(f"{key}：{truncate(value)}")
-        print("------------------------------\n")
-
-    if total > rows_to_show:
-        print(f"... 還有 {total - rows_to_show} 筆資料未顯示")
-
-
-def main() -> None:
+@app.route("/")
+def index():
     content = download_file(URL)
     records = parse_csv(content)
-    print_records(records)
+    header_fields = list(records[0].keys()) if records else []
+    return render_template_string(
+        HTML_TEMPLATE,
+        total=len(records),
+        rows=records,
+        header_fields=header_fields,
+        url=URL,
+    )
 
 
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=5000, debug=True)
